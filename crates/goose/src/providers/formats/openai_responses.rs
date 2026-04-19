@@ -495,6 +495,7 @@ pub fn create_responses_request(
                     "name": tool.name,
                     "description": tool.description,
                     "parameters": tool.input_schema,
+                    "strict": false,
                 })
             })
             .collect();
@@ -1082,5 +1083,79 @@ mod tests {
         let info: ResponseReasoningInfo = serde_json::from_str(json).unwrap();
         assert_eq!(info.effort.as_deref(), Some("high"));
         assert_eq!(info.summary.as_deref(), Some("Thought deeply"));
+    }
+
+    #[test]
+    fn test_responses_tools_include_strict_false() {
+        let model_config = ModelConfig {
+            model_name: "gpt-5.4".to_string(),
+            context_limit: None,
+            temperature: None,
+            max_tokens: None,
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: None,
+            reasoning: None,
+        };
+
+        let tool = Tool::new(
+            "shell",
+            "Execute a shell command",
+            object!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to run"
+                    }
+                },
+                "required": ["command"]
+            }),
+        );
+
+        let result =
+            create_responses_request(&model_config, "You are helpful.", &[], &[tool]).unwrap();
+        let tools = result["tools"]
+            .as_array()
+            .expect("tools should be an array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["strict"], json!(false),
+            "Responses API defaults strict to true, but MCP tool schemas are not strict-compatible; must explicitly set strict: false");
+    }
+
+    #[test]
+    fn test_responses_request_extracts_reasoning_effort_for_openai_and_databricks_models() {
+        for (model_name, expected_model, expected_effort) in [
+            ("gpt-5.4", "gpt-5.4", "medium"),
+            ("gpt-5.4-xhigh", "gpt-5.4", "xhigh"),
+            ("databricks-gpt-5.4-high", "databricks-gpt-5.4", "high"),
+            ("databricks-o3-none", "databricks-o3", "none"),
+        ] {
+            let model_config = ModelConfig {
+                model_name: model_name.to_string(),
+                context_limit: None,
+                temperature: None,
+                max_tokens: None,
+                toolshim: false,
+                toolshim_model: None,
+                fast_model_config: None,
+                request_params: None,
+                reasoning: None,
+            };
+
+            let result =
+                create_responses_request(&model_config, "You are helpful.", &[], &[]).unwrap();
+
+            assert_eq!(
+                result["model"], expected_model,
+                "unexpected model for {model_name}"
+            );
+            assert_eq!(
+                result["reasoning"]["effort"], expected_effort,
+                "unexpected effort for {model_name}"
+            );
+            assert_eq!(result["reasoning"]["summary"], "auto");
+        }
     }
 }
