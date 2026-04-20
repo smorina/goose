@@ -17,9 +17,14 @@ import type { AcpNotificationHandler } from "./acpConnection";
 import {
   attachMcpAppPayload,
   extractToolResultText,
-  findMessageInReplayBuffer,
   findReplayMessageWithToolCall,
 } from "./acpToolCallContent";
+import {
+  clearReplayAssistantMessage,
+  clearReplayAssistantTracking,
+  ensureReplayAssistantMessage,
+  getTrackedReplayAssistantMessageId,
+} from "./acpReplayAssistant";
 import { getLocalSessionId } from "./acpSessionTracker";
 import { perfLog } from "@/shared/lib/perfLog";
 
@@ -88,7 +93,7 @@ export async function handleSessionNotification(
     }
     perf.lastAt = now;
     perf.count += 1;
-    handleReplay(sessionId, update);
+    handleReplay(sessionId, gooseSessionId, update);
   } else {
     const perf = livePerf.get(gooseSessionId);
     if (perf && update.sessionUpdate === "agent_message_chunk") {
@@ -117,25 +122,17 @@ export function clearReplayPerf(sessionId: string): void {
   replayPerf.delete(sessionId);
 }
 
-function handleReplay(sessionId: string, update: SessionUpdate): void {
+function handleReplay(
+  sessionId: string,
+  gooseSessionId: string,
+  update: SessionUpdate,
+): void {
   switch (update.sessionUpdate) {
     case "agent_message_chunk": {
-      const messageId = update.messageId ?? crypto.randomUUID();
-      const buffer = ensureReplayBuffer(sessionId);
-      if (!getBufferedMessage(sessionId, messageId)) {
-        buffer.push({
-          id: messageId,
-          role: "assistant",
-          created: Date.now(),
-          content: [],
-          metadata: {
-            userVisible: true,
-            agentVisible: true,
-            completionStatus: "inProgress",
-          },
-        });
-      }
-      const msg = getBufferedMessage(sessionId, messageId);
+      const msg = ensureReplayAssistantMessage(
+        sessionId,
+        update.messageId ?? null,
+      );
       if (msg && update.content.type === "text" && "text" in update.content) {
         const last = msg.content[msg.content.length - 1];
         if (last?.type === "text") {
@@ -148,6 +145,7 @@ function handleReplay(sessionId: string, update: SessionUpdate): void {
     }
 
     case "user_message_chunk": {
+      clearReplayAssistantMessage(sessionId);
       const messageId = update.messageId ?? crypto.randomUUID();
       const buffer = ensureReplayBuffer(sessionId);
       const existing = getBufferedMessage(sessionId, messageId);
@@ -179,22 +177,25 @@ function handleReplay(sessionId: string, update: SessionUpdate): void {
     }
 
     case "tool_call": {
-      const msg = findMessageInReplayBuffer(sessionId);
-      if (msg) {
-        msg.content.push({
-          type: "toolRequest",
-          id: update.toolCallId,
-          name: update.title,
-          arguments: {},
-          status: "executing",
-          startedAt: Date.now(),
-        });
-      }
+      const msg = ensureReplayAssistantMessage(sessionId);
+      msg.content.push({
+        type: "toolRequest",
+        id: update.toolCallId,
+        name: update.title,
+        arguments: {},
+        status: "executing",
+        startedAt: Date.now(),
+      });
       break;
     }
 
     case "tool_call_update": {
-      const msg = findReplayMessageWithToolCall(sessionId, update.toolCallId);
+      const replayMessageId = getTrackedReplayAssistantMessageId(sessionId);
+      const msg =
+        findReplayMessageWithToolCall(sessionId, update.toolCallId) ??
+        (replayMessageId
+          ? getBufferedMessage(sessionId, replayMessageId)
+          : undefined);
       if (msg) {
         if (update.title) {
           const tc = msg.content.find(
@@ -232,6 +233,10 @@ function handleReplay(sessionId: string, update: SessionUpdate): void {
               (tc as ToolRequestContent)?.name ?? update.title ?? "",
               update,
               true,
+              {
+                gooseSessionId,
+                replayMessageId,
+              },
             );
           }
         }
@@ -480,6 +485,7 @@ function ensureLiveAssistantMessage(
 
 export function clearMessageTracking(): void {
   presetMessageIds.clear();
+  clearReplayAssistantTracking();
 }
 
 const handler: AcpNotificationHandler = {
