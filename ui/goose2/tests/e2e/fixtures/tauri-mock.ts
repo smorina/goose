@@ -111,7 +111,7 @@ export function buildInitScript(options?: {
             }
             return jsonRpcResult(message.id, { stopReason: "end_turn" });
           }
-          case "_goose/providers/inventory":
+          case "_goose/providers/list":
             return jsonRpcResult(message.id, { entries: [] });
           case "_goose/providers/inventory/refresh":
             return jsonRpcResult(message.id, { started: [], skipped: [] });
