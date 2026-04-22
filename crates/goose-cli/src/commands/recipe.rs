@@ -202,6 +202,10 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn deeplink_prefix() -> String {
+        format!("{}://recipe?config=", Brand::get().deeplink_scheme)
+    }
+
     fn create_test_recipe_file(dir: &TempDir, filename: &str, content: &str) -> String {
         let file_path = dir.path().join(filename);
         fs::write(&file_path, content).expect("Failed to write test recipe file");
@@ -243,8 +247,9 @@ instructions: "Test instructions"
         let result = handle_deeplink(&recipe_path, &[]);
         assert!(result.is_ok());
         let url = result.unwrap();
-        assert!(url.starts_with("goose://recipe?config="));
-        let encoded_part = url.strip_prefix("goose://recipe?config=").unwrap();
+        let prefix = deeplink_prefix();
+        assert!(url.starts_with(&prefix));
+        let encoded_part = url.strip_prefix(&prefix).unwrap();
         assert!(!encoded_part.is_empty());
     }
 
@@ -258,7 +263,7 @@ instructions: "Test instructions"
         let result = handle_deeplink(&recipe_path, &params);
         assert!(result.is_ok());
         let url = result.unwrap();
-        assert!(url.starts_with("goose://recipe?config="));
+        assert!(url.starts_with(&deeplink_prefix()));
         assert!(url.contains("&name=John"));
         assert!(url.contains("&age=30"));
     }
@@ -333,7 +338,10 @@ instructions: "Test instructions"
         let (result, _, output) = run_handle_open(&recipe_path, &[], Err(opener_err));
 
         assert!(result.is_err());
-        assert!(output.contains("Failed to open recipe in Goose Desktop"));
+        assert!(output.contains(&format!(
+            "Failed to open recipe in {} Desktop",
+            Brand::get().product_name_cap()
+        )));
         assert!(output.contains("desktop not found"));
         assert!(output.contains(&expected_url));
     }
@@ -378,10 +386,11 @@ instructions: "Test instructions"
         let result = generate_deeplink(&recipe_path, HashMap::new());
         assert!(result.is_ok());
         let (url, recipe) = result.unwrap();
-        assert!(url.starts_with("goose://recipe?config="));
+        let prefix = deeplink_prefix();
+        assert!(url.starts_with(&prefix));
         assert_eq!(recipe.title, "Test Recipe with Valid JSON Schema");
         assert_eq!(recipe.description, "A test recipe with valid JSON schema");
-        let encoded_part = url.strip_prefix("goose://recipe?config=").unwrap();
+        let encoded_part = url.strip_prefix(&prefix).unwrap();
         assert!(!encoded_part.is_empty());
     }
 
@@ -398,7 +407,7 @@ instructions: "Test instructions"
         let result = generate_deeplink(&recipe_path, params);
         assert!(result.is_ok());
         let (url, recipe) = result.unwrap();
-        assert!(url.starts_with("goose://recipe?config="));
+        assert!(url.starts_with(&deeplink_prefix()));
         assert!(url.contains("&name=Alice"));
         assert!(url.contains("&role=developer"));
         assert_eq!(recipe.title, "Test Recipe with Valid JSON Schema");

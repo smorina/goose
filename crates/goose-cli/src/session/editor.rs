@@ -70,6 +70,10 @@ fn create_temp_file(messages: &[&str], prefill: Option<&str>) -> Result<NamedTem
     Ok(temp_file)
 }
 
+fn prompt_symlink_path() -> PathBuf {
+    PathBuf::from(format!(".{}_prompt_temp.md", Brand::get().binary_name))
+}
+
 /// RAII guard to ensure symlink is cleaned up even on panic
 struct SymlinkCleanup {
     symlink_path: PathBuf,
@@ -130,7 +134,7 @@ pub fn get_editor_input(
     let temp_file = create_temp_file(messages, prefill)?;
     let temp_path = temp_file.path().to_path_buf();
 
-    let symlink_path = PathBuf::from(".goose_prompt_temp.md");
+    let symlink_path = prompt_symlink_path();
 
     if symlink_path.exists() {
         std::fs::remove_file(&symlink_path)?;
@@ -248,7 +252,10 @@ This is the user's input
         let path = temp_file.path();
 
         assert!(path.exists());
-        assert!(path.to_str().unwrap().contains("goose_prompt_"));
+        assert!(path
+            .to_str()
+            .unwrap()
+            .contains(&format!("{}_prompt_", Brand::get().binary_name)));
         assert!(path.to_str().unwrap().ends_with(".md"));
 
         let content = fs::read_to_string(path).unwrap();
@@ -317,6 +324,14 @@ with multiple lines.
         assert_eq!(
             result,
             "This is the user's actual input\nwith multiple lines."
+        );
+    }
+
+    #[test]
+    fn test_prompt_symlink_path_uses_active_brand() {
+        assert_eq!(
+            prompt_symlink_path(),
+            PathBuf::from(format!(".{}_prompt_temp.md", Brand::get().binary_name))
         );
     }
 

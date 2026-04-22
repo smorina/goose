@@ -103,7 +103,7 @@ pub async fn handle_schedule_add(
             // The scheduler has copied the recipe to its internal directory.
             // We can reconstruct the likely path for display if needed, or adjust success message.
             let scheduled_recipes_dir = get_default_scheduled_recipes_dir()
-                .unwrap_or_else(|_| Path::new("./.goose_scheduled_recipes").to_path_buf()); // Fallback for display
+                .unwrap_or_else(|_| fallback_scheduled_recipes_dir());
             let extension = Path::new(&recipe_source_arg)
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -135,6 +135,10 @@ pub async fn handle_schedule_add(
             }
         }
     }
+}
+
+fn fallback_scheduled_recipes_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("./.{}_scheduled_recipes", Brand::get().binary_name))
 }
 
 pub async fn handle_schedule_list() -> Result<()> {
@@ -347,4 +351,17 @@ pub async fn handle_schedule_cron_help() -> Result<()> {
     println!("  {bin} schedule add --schedule-id weekly-summary --cron \"0 9 * * 1\" --recipe-source summary.yaml");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_scheduled_recipes_dir_uses_active_brand() {
+        assert_eq!(
+            fallback_scheduled_recipes_dir(),
+            std::path::PathBuf::from(format!("./.{}_scheduled_recipes", Brand::get().binary_name))
+        );
+    }
 }

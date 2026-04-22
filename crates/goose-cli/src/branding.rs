@@ -181,13 +181,54 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+fn is_rebrand_boundary(ch: Option<char>) -> bool {
+    match ch {
+        None => true,
+        Some(c) => !c.is_alphanumeric() && c != '-' && c != '_',
+    }
+}
+
+fn replace_standalone_phrase(s: &str, needle: &str, replacement: &str) -> String {
+    let mut rewritten = String::with_capacity(s.len());
+    let mut search_from = 0;
+
+    while let Some(offset) = s.get(search_from..).and_then(|tail| tail.find(needle)) {
+        let start = search_from + offset;
+        let end = start + needle.len();
+        let prev = s.get(..start).and_then(|prefix| prefix.chars().next_back());
+        let next = s.get(end..).and_then(|suffix| suffix.chars().next());
+
+        if is_rebrand_boundary(prev) && is_rebrand_boundary(next) {
+            rewritten.push_str(s.get(search_from..start).unwrap());
+            rewritten.push_str(replacement);
+            search_from = end;
+        } else {
+            let step = s
+                .get(start..)
+                .and_then(|tail| tail.chars().next())
+                .unwrap()
+                .len_utf8();
+            rewritten.push_str(s.get(search_from..start + step).unwrap());
+            search_from = start + step;
+        }
+    }
+
+    rewritten.push_str(s.get(search_from..).unwrap());
+    rewritten
+}
+
+fn rewrite_cli_invocations(s: &str, b: &Brand) -> String {
+    replace_standalone_phrase(
+        s,
+        &format!("{DEFAULT_BINARY_NAME} term"),
+        &format!("{} term", b.binary_name),
+    )
+}
+
 /// Rewrite the default product noun to the branded equivalents.
 ///
-/// Replaces `Goose` with the capitalized product name and `goose` with the
-/// binary name. Downstream distros that keep `product_name` in sync with the
-/// title-cased `binary_name` (the common case) get sensible output for both
-/// display phrases ("Configure goose settings") and invocation examples
-/// ("goose term init zsh").
+/// Display phrases use `product_name`, while explicit CLI invocations use
+/// `binary_name`.
 fn rebrand_str(s: &str, b: &Brand) -> String {
     let product_cap = b.product_name_cap();
     let alias_primary_placeholder = "__BRAND_ALIAS_PRIMARY__";
@@ -195,10 +236,20 @@ fn rebrand_str(s: &str, b: &Brand) -> String {
     let alias_primary = format!("@{}", b.shell_alias_primary);
     let alias_short = format!("@{}", b.shell_alias_short);
 
-    s.replace("@goose", alias_primary_placeholder)
-        .replace("@g", alias_short_placeholder)
-        .replace("Goose", &product_cap)
-        .replace(DEFAULT_BINARY_NAME, b.binary_name)
+    let rewritten = rewrite_cli_invocations(
+        &s.replace("@goose", alias_primary_placeholder)
+            .replace("@g", alias_short_placeholder),
+        b,
+    );
+    let rewritten = replace_standalone_phrase(
+        &rewritten,
+        "goose-channel",
+        &format!("{}-channel", b.binary_name),
+    );
+    let rewritten = replace_standalone_phrase(&rewritten, "Goose", &product_cap);
+    let rewritten = replace_standalone_phrase(&rewritten, DEFAULT_PRODUCT_NAME, b.product_name);
+
+    rewritten
         .replace(alias_primary_placeholder, &alias_primary)
         .replace(alias_short_placeholder, &alias_short)
 }
@@ -330,7 +381,7 @@ mod tests {
         };
         assert_eq!(
             rebrand_str("Configure goose settings", &b),
-            "Configure foobar settings"
+            "Configure Foobar settings"
         );
         assert_eq!(
             rebrand_str("Check that your Goose setup is working", &b),
@@ -339,6 +390,10 @@ mod tests {
         assert_eq!(
             rebrand_str("eval \"$(goose term init zsh)\"", &b),
             "eval \"$(foobar term init zsh)\""
+        );
+        assert_eq!(
+            rebrand_str("channel_name=goose-channel", &b),
+            "channel_name=foobar-channel"
         );
         assert_eq!(
             rebrand_str("@goose \"create a python script\"", &b),
@@ -415,6 +470,53 @@ mod tests {
         let rendered = cmd.render_long_help().to_string();
         assert!(!rendered.contains("goose"), "{rendered}");
         assert!(!rendered.contains("Goose"), "{rendered}");
+    }
+
+    #[test]
+    fn mismatched_product_and_binary_names_keep_help_semantics_distinct() {
+        use clap::CommandFactory;
+        let b = Brand {
+            product_name: "Foobar Assistant",
+            binary_name: "fb",
+            shell_alias_primary: "chat",
+            shell_alias_short: "c",
+            shell_fn_prefix: "fb",
+            deeplink_scheme: "foob",
+            github_owner: "acme",
+            github_repo: "fb",
+            agent_identity_sentence: "You are Foobar Assistant, an AI assistant.",
+            interactive_style: "minimal",
+        };
+
+        let mut cmd = rewrite_command(crate::Cli::command(), &b);
+        let mcp_help = cmd
+            .find_subcommand_mut("mcp")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(
+            mcp_help.contains("bundled with Foobar Assistant"),
+            "{mcp_help}"
+        );
+        assert!(!mcp_help.contains("bundled with fb"), "{mcp_help}");
+
+        let term_help = cmd
+            .find_subcommand_mut("term")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(
+            term_help.contains("Runs a Foobar Assistant session tied to your terminal window."),
+            "{term_help}"
+        );
+        assert!(
+            term_help.contains("eval \"$(fb term init zsh)\""),
+            "{term_help}"
+        );
+        assert!(
+            term_help.contains("fb term run \"list files in this directory\""),
+            "{term_help}"
+        );
     }
 
     /// Regression guard: under a synthetic non-default brand, no subcommand's
@@ -519,21 +621,35 @@ mod tests {
             format!("{path} {}", cmd.get_name())
         };
 
-        // render_long_help() needs &mut self; clone is cheap for a test.
-        let mut clone = cmd.clone();
-        let help = clone.render_long_help().to_string();
+        // clap rendering needs &mut self; clone is cheap for a test.
+        let mut long_clone = cmd.clone();
+        let long_help = long_clone.render_long_help().to_string();
+        let mut short_clone = cmd.clone();
+        let short_help = short_clone.render_help().to_string();
 
         assert!(
-            !help.contains("goose"),
-            "branding leak: `{current_path}` help contains lowercase `goose`. \
+            !long_help.contains("goose"),
+            "branding leak: `{current_path}` long help contains lowercase `goose`. \
              Either route the offending string through `apply_branding` / `Brand::get()` \
-             or remove it from the clap derive attribute.\n\nFull help:\n{help}"
+             or remove it from the clap derive attribute.\n\nFull help:\n{long_help}"
         );
         assert!(
-            !help.contains("Goose"),
-            "branding leak: `{current_path}` help contains capitalized `Goose`. \
+            !long_help.contains("Goose"),
+            "branding leak: `{current_path}` long help contains capitalized `Goose`. \
              Either route the offending string through `apply_branding` / `Brand::get()` \
-             or remove it from the clap derive attribute.\n\nFull help:\n{help}"
+             or remove it from the clap derive attribute.\n\nFull help:\n{long_help}"
+        );
+        assert!(
+            !short_help.contains("goose"),
+            "branding leak: `{current_path}` short help contains lowercase `goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nShort help:\n{short_help}"
+        );
+        assert!(
+            !short_help.contains("Goose"),
+            "branding leak: `{current_path}` short help contains capitalized `Goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nShort help:\n{short_help}"
         );
 
         for sub in cmd.get_subcommands() {

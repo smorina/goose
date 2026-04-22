@@ -1353,7 +1353,7 @@ pub fn display_session_info(
 }
 
 fn session_ready_text() -> String {
-    format!("   {} is ready", Brand::get().binary_name)
+    format!("   {} is ready", Brand::get().product_name)
 }
 
 fn set_terminal_title() {
@@ -1581,7 +1581,7 @@ mod tests {
     fn test_session_ready_text_uses_active_brand() {
         assert_eq!(
             session_ready_text(),
-            format!("   {} is ready", Brand::get().binary_name)
+            format!("   {} is ready", Brand::get().product_name)
         );
     }
 

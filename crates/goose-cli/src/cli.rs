@@ -1538,6 +1538,15 @@ async fn handle_term_subcommand(command: TermCommand) -> Result<()> {
 }
 
 #[cfg(feature = "local-inference")]
+fn local_models_download_hint(repo_id: &str) -> String {
+    format!(
+        "  Download: {} local-models download {}:<quantization>",
+        Brand::get().binary_name,
+        repo_id
+    )
+}
+
+#[cfg(feature = "local-inference")]
 async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> {
     use goose::providers::local_inference::hf_models;
     use goose::providers::local_inference::local_model_registry::{
@@ -1570,10 +1579,7 @@ async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> 
                     };
                     println!("  {} — {}", file.quantization, size);
                 }
-                println!(
-                    "  Download: goose local-models download {}:<quantization>",
-                    model.repo_id
-                );
+                println!("{}", local_models_download_hint(&model.repo_id));
             }
         }
         LocalModelsCommand::Download { spec } => {
@@ -1852,5 +1858,21 @@ pub async fn cli() -> anyhow::Result<()> {
             }
         }
         None => handle_default_session().await,
+    }
+}
+
+#[cfg(all(test, feature = "local-inference"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_models_download_hint_uses_active_binary_name() {
+        assert_eq!(
+            local_models_download_hint("owner/repo"),
+            format!(
+                "  Download: {} local-models download owner/repo:<quantization>",
+                Brand::get().binary_name
+            )
+        );
     }
 }
