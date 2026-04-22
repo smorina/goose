@@ -564,7 +564,7 @@ mod tests {
     fn test_asset_name_valid() {
         let name = asset_name();
         assert!(!name.is_empty());
-        assert!(name.starts_with("goose-"));
+        assert!(name.starts_with(&format!("{}-", Brand::get().binary_name)));
         #[cfg(target_os = "windows")]
         assert!(name.ends_with(".zip"));
         #[cfg(not(target_os = "windows"))]
@@ -575,9 +575,9 @@ mod tests {
     fn test_binary_name() {
         let name = binary_name();
         #[cfg(target_os = "windows")]
-        assert_eq!(name, "goose.exe");
+        assert_eq!(name, format!("{}.exe", Brand::get().binary_name));
         #[cfg(not(target_os = "windows"))]
-        assert_eq!(name, "goose");
+        assert_eq!(name, Brand::get().binary_name);
     }
 
     #[test]
