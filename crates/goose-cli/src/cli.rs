@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, FromArgMatches, Parser, Subcommand};
 use clap_complete::{generate, Shell as ClapShell};
 use goose::builtin_extension::register_builtin_extensions;
 use goose::config::{Config, GooseMode};
@@ -9,6 +9,7 @@ use goose::recipe::Recipe;
 use goose_mcp::mcp_server_runner::{serve, McpCommand};
 use goose_mcp::{AutoVisualiserRouter, ComputerControllerServer, MemoryServer, TutorialServer};
 
+use crate::branding::Brand;
 #[cfg(feature = "telemetry")]
 use crate::commands::configure::configure_telemetry_consent_dialog;
 use crate::commands::configure::handle_configure;
@@ -1307,8 +1308,9 @@ fn parse_run_input(
         (Some(file), _, _) => {
             let contents = std::fs::read_to_string(file).unwrap_or_else(|err| {
                 eprintln!(
-                    "Instruction file not found — did you mean to use goose run --text?\n{}",
-                    err
+                    "Instruction file not found — did you mean to use {} run --text?\n{}",
+                    Brand::get().binary_name,
+                    err,
                 );
                 std::process::exit(1);
             });
@@ -1536,6 +1538,15 @@ async fn handle_term_subcommand(command: TermCommand) -> Result<()> {
 }
 
 #[cfg(feature = "local-inference")]
+fn local_models_download_hint(repo_id: &str) -> String {
+    format!(
+        "  Download: {} local-models download {}:<quantization>",
+        Brand::get().binary_name,
+        repo_id
+    )
+}
+
+#[cfg(feature = "local-inference")]
 async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> {
     use goose::providers::local_inference::hf_models;
     use goose::providers::local_inference::local_model_registry::{
@@ -1568,10 +1579,7 @@ async fn handle_local_models_command(command: LocalModelsCommand) -> Result<()> 
                     };
                     println!("  {} — {}", file.quantization, size);
                 }
-                println!(
-                    "  Download: goose local-models download {}:<quantization>",
-                    model.repo_id
-                );
+                println!("{}", local_models_download_hint(&model.repo_id));
             }
         }
         LocalModelsCommand::Download { spec } => {
@@ -1743,7 +1751,8 @@ async fn handle_default_session() -> Result<()> {
 pub async fn cli() -> anyhow::Result<()> {
     register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
 
-    let cli = Cli::parse();
+    let matches = crate::branding::branded_command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
 
     if let Err(e) = crate::project_tracker::update_project_tracker(None, None) {
         warn!("Warning: Failed to update project tracker: {}", e);
@@ -1758,7 +1767,7 @@ pub async fn cli() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Command::Completion { shell, bin_name }) => {
-            let mut cmd = Cli::command();
+            let mut cmd = crate::branding::branded_command();
             generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
             Ok(())
         }
@@ -1849,5 +1858,21 @@ pub async fn cli() -> anyhow::Result<()> {
             }
         }
         None => handle_default_session().await,
+    }
+}
+
+#[cfg(all(test, feature = "local-inference"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_models_download_hint_uses_active_binary_name() {
+        assert_eq!(
+            local_models_download_hint("owner/repo"),
+            format!(
+                "  Download: {} local-models download owner/repo:<quantization>",
+                Brand::get().binary_name
+            )
+        );
     }
 }

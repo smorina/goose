@@ -1,3 +1,4 @@
+use crate::branding::Brand;
 use goose::config::GooseMode;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::highlight::{CmdKind, Highlighter};
@@ -404,9 +405,10 @@ impl Hinter for GooseCompleter {
         }
 
         match cache.hint_status {
-            HintStatus::Interrupted => {
-                Some("Interrupted, what should goose work on instead?".to_string())
-            }
+            HintStatus::Interrupted => Some(format!(
+                "Interrupted, what should {} work on instead?",
+                Brand::get().product_name
+            )),
             HintStatus::MaybeExit => {
                 Some("Press Ctrl+C again to exit, or type new instructions to continue".to_string())
             }
@@ -454,6 +456,7 @@ impl Validator for GooseCompleter {
 #[cfg(test)]
 mod tests {
     use rmcp::model::PromptArgument;
+    use rustyline::{hint::Hinter, history::DefaultHistory, Context};
 
     use super::*;
     use crate::session::output;
@@ -651,5 +654,23 @@ mod tests {
             .complete_argument_keys("/prompt nonexistent")
             .unwrap();
         assert_eq!(candidates.len(), 0);
+    }
+
+    #[test]
+    fn test_interrupted_hint_uses_active_brand_name() {
+        let cache = create_test_cache();
+        cache.write().unwrap().hint_status = HintStatus::Interrupted;
+
+        let completer = GooseCompleter::new(cache);
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        assert_eq!(
+            completer.hint("", 0, &ctx),
+            Some(format!(
+                "Interrupted, what should {} work on instead?",
+                Brand::get().product_name
+            ))
+        );
     }
 }

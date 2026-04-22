@@ -9,6 +9,7 @@ pub mod streaming_buffer;
 mod task_execution_display;
 mod thinking;
 
+use crate::branding::Brand;
 use crate::session::task_execution_display::{
     format_task_execution_notification, TASK_EXECUTION_NOTIFICATION_TYPE,
 };
@@ -658,11 +659,12 @@ impl CliSession {
                         }
                     }
                     None => {
-                        output::render_error(
+                        output::render_error(&format!(
                             "No editor found. Set one with:\n  \
-                                 goose configure set goose_prompt_editor \"vim\"\n  \
+                                 {} configure set goose_prompt_editor \"vim\"\n  \
                                  or set $VISUAL or $EDITOR in your shell.",
-                        );
+                            Brand::get().binary_name
+                        ));
                     }
                 }
             }
@@ -789,7 +791,10 @@ impl CliSession {
         };
         self.agent.update_goose_mode(mode, &self.session_id).await?;
         config.set_goose_mode(mode)?;
-        output::goose_mode_message(&format!("Goose mode set to '{mode}'"));
+        output::goose_mode_message(&format!(
+            "{} mode set to '{mode}'",
+            Brand::get().product_name_cap()
+        ));
         Ok(())
     }
 
@@ -1598,7 +1603,10 @@ fn prompt_tool_confirmation(security_prompt: &Option<String>) -> Result<Permissi
         println!("\n{}", security_message);
         "Do you allow this tool call?".to_string()
     } else {
-        "Goose would like to call the above tool, do you allow?".to_string()
+        format!(
+            "{} would like to call the above tool, do you allow?",
+            Brand::get().product_name_cap()
+        )
     };
 
     let permission_result = if security_prompt.is_none() {
@@ -1970,9 +1978,12 @@ async fn get_reasoner() -> Result<Arc<dyn Provider>, anyhow::Error> {
         provider
     } else {
         println!("WARNING: GOOSE_PLANNER_PROVIDER not found. Using default provider...");
-        config
-            .get_goose_provider()
-            .expect("No provider configured. Run 'goose configure' first")
+        config.get_goose_provider().unwrap_or_else(|_| {
+            panic!(
+                "No provider configured. Run '{} configure' first",
+                Brand::get().binary_name
+            )
+        })
     };
 
     // Try planner-specific model first, fall back to default model
@@ -1980,9 +1991,12 @@ async fn get_reasoner() -> Result<Arc<dyn Provider>, anyhow::Error> {
         model
     } else {
         println!("WARNING: GOOSE_PLANNER_MODEL not found. Using default model...");
-        config
-            .get_goose_model()
-            .expect("No model configured. Run 'goose configure' first")
+        config.get_goose_model().unwrap_or_else(|_| {
+            panic!(
+                "No model configured. Run '{} configure' first",
+                Brand::get().binary_name
+            )
+        })
     };
 
     let model_config =

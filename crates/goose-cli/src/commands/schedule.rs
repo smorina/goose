@@ -1,3 +1,4 @@
+use crate::branding::Brand;
 use anyhow::{bail, Context, Result};
 use goose::scheduler::{
     get_default_scheduled_recipes_dir, get_default_scheduler_storage_path, ScheduledJob, Scheduler,
@@ -102,7 +103,7 @@ pub async fn handle_schedule_add(
             // The scheduler has copied the recipe to its internal directory.
             // We can reconstruct the likely path for display if needed, or adjust success message.
             let scheduled_recipes_dir = get_default_scheduled_recipes_dir()
-                .unwrap_or_else(|_| Path::new("./.goose_scheduled_recipes").to_path_buf()); // Fallback for display
+                .unwrap_or_else(|_| fallback_scheduled_recipes_dir());
             let extension = Path::new(&recipe_source_arg)
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -134,6 +135,10 @@ pub async fn handle_schedule_add(
             }
         }
     }
+}
+
+fn fallback_scheduled_recipes_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("./.{}_scheduled_recipes", Brand::get().binary_name))
 }
 
 pub async fn handle_schedule_list() -> Result<()> {
@@ -265,7 +270,8 @@ pub async fn handle_schedule_run_now(schedule_id: String) -> Result<()> {
 pub async fn handle_schedule_services_status() -> Result<()> {
     println!("Service management has been removed as Temporal scheduler is no longer supported.");
     println!(
-        "The built-in scheduler runs within the goose process and requires no external services."
+        "The built-in scheduler runs within the {} process and requires no external services.",
+        Brand::get().product_name
     );
     Ok(())
 }
@@ -273,13 +279,18 @@ pub async fn handle_schedule_services_status() -> Result<()> {
 pub async fn handle_schedule_services_stop() -> Result<()> {
     println!("Service management has been removed as Temporal scheduler is no longer supported.");
     println!(
-        "The built-in scheduler runs within the goose process and requires no external services."
+        "The built-in scheduler runs within the {} process and requires no external services.",
+        Brand::get().product_name
     );
     Ok(())
 }
 
 pub async fn handle_schedule_cron_help() -> Result<()> {
-    println!("📅 Cron Expression Guide for goose Scheduler");
+    let brand = Brand::get();
+    println!(
+        "📅 Cron Expression Guide for {} Scheduler",
+        brand.product_name
+    );
     println!("===========================================\\n");
 
     println!("🕐 HOURLY SCHEDULES (Most Common Request):");
@@ -330,13 +341,27 @@ pub async fn handle_schedule_cron_help() -> Result<()> {
     println!("  @hourly   - Once an hour (0 * * * *)\\n");
 
     println!("💡 EXAMPLES:");
+    let bin = brand.binary_name;
     println!(
-        "  goose schedule add --schedule-id hourly-report --cron \"0 * * * *\" --recipe-source report.yaml"
+        "  {bin} schedule add --schedule-id hourly-report --cron \"0 * * * *\" --recipe-source report.yaml"
     );
     println!(
-        "  goose schedule add --schedule-id daily-backup --cron \"@daily\" --recipe-source backup.yaml"
+        "  {bin} schedule add --schedule-id daily-backup --cron \"@daily\" --recipe-source backup.yaml"
     );
-    println!("  goose schedule add --schedule-id weekly-summary --cron \"0 9 * * 1\" --recipe-source summary.yaml");
+    println!("  {bin} schedule add --schedule-id weekly-summary --cron \"0 9 * * 1\" --recipe-source summary.yaml");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_scheduled_recipes_dir_uses_active_brand() {
+        assert_eq!(
+            fallback_scheduled_recipes_dir(),
+            std::path::PathBuf::from(format!("./.{}_scheduled_recipes", Brand::get().binary_name))
+        );
+    }
 }

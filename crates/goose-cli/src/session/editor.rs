@@ -1,3 +1,4 @@
+use crate::branding::Brand;
 use anyhow::Result;
 use goose::config::Config;
 use std::fs;
@@ -39,7 +40,7 @@ fn resolve_editor_from_sources(
 
 /// Build the markdown template content for the editor prompt.
 fn build_template(messages: &[&str], prefill: Option<&str>) -> String {
-    let mut content = String::from("# Goose Prompt Editor\n\n");
+    let mut content = format!("# {} Prompt Editor\n\n", Brand::get().product_name_cap());
 
     content.push_str("# Your prompt:\n\n");
     if let Some(text) = prefill {
@@ -62,13 +63,15 @@ fn build_template(messages: &[&str], prefill: Option<&str>) -> String {
 
 /// Create temporary markdown file with conversation history and optional prefill text
 fn create_temp_file(messages: &[&str], prefill: Option<&str>) -> Result<NamedTempFile> {
-    let temp_file = Builder::new()
-        .prefix("goose_prompt_")
-        .suffix(".md")
-        .tempfile()?;
+    let prefix = format!("{}_prompt_", crate::branding::Brand::get().binary_name);
+    let temp_file = Builder::new().prefix(&prefix).suffix(".md").tempfile()?;
 
     fs::write(temp_file.path(), build_template(messages, prefill))?;
     Ok(temp_file)
+}
+
+fn prompt_symlink_path() -> PathBuf {
+    PathBuf::from(format!(".{}_prompt_temp.md", Brand::get().binary_name))
 }
 
 /// RAII guard to ensure symlink is cleaned up even on panic
@@ -131,7 +134,7 @@ pub fn get_editor_input(
     let temp_file = create_temp_file(messages, prefill)?;
     let temp_path = temp_file.path().to_path_buf();
 
-    let symlink_path = PathBuf::from(".goose_prompt_temp.md");
+    let symlink_path = prompt_symlink_path();
 
     if symlink_path.exists() {
         std::fs::remove_file(&symlink_path)?;
@@ -249,11 +252,17 @@ This is the user's input
         let path = temp_file.path();
 
         assert!(path.exists());
-        assert!(path.to_str().unwrap().contains("goose_prompt_"));
+        assert!(path
+            .to_str()
+            .unwrap()
+            .contains(&format!("{}_prompt_", Brand::get().binary_name)));
         assert!(path.to_str().unwrap().ends_with(".md"));
 
         let content = fs::read_to_string(path).unwrap();
-        assert!(content.contains("# Goose Prompt Editor"));
+        assert!(content.contains(&format!(
+            "# {} Prompt Editor",
+            Brand::get().product_name_cap()
+        )));
         assert!(content.contains("## User: Hello"));
         assert!(content.contains("## Assistant: Hi there!"));
         assert!(content.contains("# Your prompt:"));
@@ -315,6 +324,14 @@ with multiple lines.
         assert_eq!(
             result,
             "This is the user's actual input\nwith multiple lines."
+        );
+    }
+
+    #[test]
+    fn test_prompt_symlink_path_uses_active_brand() {
+        assert_eq!(
+            prompt_symlink_path(),
+            PathBuf::from(format!(".{}_prompt_temp.md", Brand::get().binary_name))
         );
     }
 
@@ -485,7 +502,13 @@ with multiple lines.
     #[test]
     fn test_build_template_no_prefill_no_messages() {
         let content = build_template(&[], None);
-        assert_eq!(content, "# Goose Prompt Editor\n\n# Your prompt:\n\n");
+        assert_eq!(
+            content,
+            format!(
+                "# {} Prompt Editor\n\n# Your prompt:\n\n",
+                Brand::get().product_name_cap()
+            )
+        );
     }
 
     #[test]

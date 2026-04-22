@@ -1,0 +1,662 @@
+//! Build-time branding seam for downstream distributions.
+//!
+//! Every user-visible occurrence of the product noun inside this crate routes
+//! through [`Brand::get()`]. Downstream distros override any field by setting
+//! the corresponding `GOOSE_BRAND_*` env var at `cargo build` time; unset vars
+//! fall back to today's goose-branded defaults.
+//!
+//! For clap `about` / `long_about` strings embedded in derive attributes, the
+//! derive keeps the literal goose-branded text and [`apply_branding`] walks the
+//! `clap::Command` tree at startup, rewriting product-noun tokens when the brand
+//! differs from the default. When [`Brand::is_default`] is true the pass is a
+//! no-op — default builds produce byte-identical `--help`, manpages, and shell
+//! templates.
+//!
+//! See `CUSTOM_DISTROS.md` for the env var list and usage.
+
+const DEFAULT_PRODUCT_NAME: &str = "goose";
+const DEFAULT_BINARY_NAME: &str = "goose";
+const DEFAULT_SHELL_ALIAS_PRIMARY: &str = "goose";
+const DEFAULT_SHELL_ALIAS_SHORT: &str = "g";
+const DEFAULT_SHELL_FN_PREFIX: &str = "goose";
+const DEFAULT_DEEPLINK_SCHEME: &str = "goose";
+const DEFAULT_GITHUB_OWNER: &str = "aaif-goose";
+const DEFAULT_GITHUB_REPO: &str = "goose";
+const DEFAULT_AGENT_IDENTITY: &str = "You are goose, an AI assistant.";
+const DEFAULT_INTERACTIVE_STYLE: &str = "goose";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InteractiveStyle {
+    Goose,
+    Minimal,
+}
+
+impl InteractiveStyle {
+    fn from_env(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("minimal") {
+            Self::Minimal
+        } else {
+            Self::Goose
+        }
+    }
+
+    fn prompt_prefix(self) -> &'static str {
+        match self {
+            Self::Goose => "🪿 ",
+            Self::Minimal => "> ",
+        }
+    }
+
+    fn session_banner_lines(self) -> [&'static str; 3] {
+        match self {
+            Self::Goose => ["  __( O)>", r" \____)", "   L L"],
+            Self::Minimal => [">", "", ""],
+        }
+    }
+
+    fn title_prefix(self) -> &'static str {
+        match self {
+            Self::Goose => "🪿",
+            Self::Minimal => "",
+        }
+    }
+}
+
+pub struct Brand {
+    /// Display noun used in user-facing messages (e.g. "goose Version:").
+    pub product_name: &'static str,
+    /// Compiled binary name, clap root command name, invocation examples.
+    pub binary_name: &'static str,
+    /// Primary shell alias emitted by `term init` (e.g. `@goose`).
+    pub shell_alias_primary: &'static str,
+    /// Short shell alias emitted by `term init` (e.g. `@g`).
+    pub shell_alias_short: &'static str,
+    /// Function/variable prefix used in shell templates
+    /// (e.g. `goose_preexec`, `goose_preexec_installed`).
+    pub shell_fn_prefix: &'static str,
+    /// URL scheme for recipe deeplinks (e.g. `goose://recipe?...`).
+    pub deeplink_scheme: &'static str,
+    /// GitHub owner for the update + attestation URLs.
+    pub github_owner: &'static str,
+    /// GitHub repo for the update + attestation URLs.
+    pub github_repo: &'static str,
+    /// System prompt used by the provider-configuration smoke test.
+    pub agent_identity_sentence: &'static str,
+    /// Interactive CLI presentation style (prompt prefix, session banner).
+    pub interactive_style: &'static str,
+}
+
+pub const BRAND: Brand = Brand {
+    product_name: match option_env!("GOOSE_BRAND_PRODUCT_NAME") {
+        Some(v) => v,
+        None => DEFAULT_PRODUCT_NAME,
+    },
+    binary_name: match option_env!("GOOSE_BRAND_BINARY_NAME") {
+        Some(v) => v,
+        None => DEFAULT_BINARY_NAME,
+    },
+    shell_alias_primary: match option_env!("GOOSE_BRAND_SHELL_ALIAS_PRIMARY") {
+        Some(v) => v,
+        None => DEFAULT_SHELL_ALIAS_PRIMARY,
+    },
+    shell_alias_short: match option_env!("GOOSE_BRAND_SHELL_ALIAS_SHORT") {
+        Some(v) => v,
+        None => DEFAULT_SHELL_ALIAS_SHORT,
+    },
+    shell_fn_prefix: match option_env!("GOOSE_BRAND_SHELL_FN_PREFIX") {
+        Some(v) => v,
+        None => DEFAULT_SHELL_FN_PREFIX,
+    },
+    deeplink_scheme: match option_env!("GOOSE_BRAND_DEEPLINK_SCHEME") {
+        Some(v) => v,
+        None => DEFAULT_DEEPLINK_SCHEME,
+    },
+    github_owner: match option_env!("GOOSE_BRAND_GITHUB_OWNER") {
+        Some(v) => v,
+        None => DEFAULT_GITHUB_OWNER,
+    },
+    github_repo: match option_env!("GOOSE_BRAND_GITHUB_REPO") {
+        Some(v) => v,
+        None => DEFAULT_GITHUB_REPO,
+    },
+    agent_identity_sentence: match option_env!("GOOSE_BRAND_AGENT_IDENTITY") {
+        Some(v) => v,
+        None => DEFAULT_AGENT_IDENTITY,
+    },
+    interactive_style: match option_env!("GOOSE_BRAND_INTERACTIVE_STYLE") {
+        Some(v) => v,
+        None => DEFAULT_INTERACTIVE_STYLE,
+    },
+};
+
+impl Brand {
+    pub fn get() -> &'static Brand {
+        &BRAND
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.product_name == DEFAULT_PRODUCT_NAME
+            && self.binary_name == DEFAULT_BINARY_NAME
+            && self.shell_alias_primary == DEFAULT_SHELL_ALIAS_PRIMARY
+            && self.shell_alias_short == DEFAULT_SHELL_ALIAS_SHORT
+            && self.shell_fn_prefix == DEFAULT_SHELL_FN_PREFIX
+            && self.deeplink_scheme == DEFAULT_DEEPLINK_SCHEME
+            && self.github_owner == DEFAULT_GITHUB_OWNER
+            && self.github_repo == DEFAULT_GITHUB_REPO
+            && self.agent_identity_sentence == DEFAULT_AGENT_IDENTITY
+            && self.interactive_style == DEFAULT_INTERACTIVE_STYLE
+    }
+
+    pub fn product_name_cap(&self) -> String {
+        capitalize(self.product_name)
+    }
+
+    pub fn interactive_style_kind(&self) -> InteractiveStyle {
+        InteractiveStyle::from_env(self.interactive_style)
+    }
+
+    pub fn interactive_prefix(&self) -> &'static str {
+        self.interactive_style_kind().prompt_prefix()
+    }
+
+    pub fn session_banner_lines(&self) -> [&'static str; 3] {
+        self.interactive_style_kind().session_banner_lines()
+    }
+
+    pub fn terminal_title_prefix(&self) -> String {
+        let prefix = self.interactive_style_kind().title_prefix();
+        if prefix.is_empty() {
+            self.product_name_cap()
+        } else {
+            prefix.to_string()
+        }
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn is_rebrand_boundary(ch: Option<char>) -> bool {
+    match ch {
+        None => true,
+        Some(c) => !c.is_alphanumeric() && c != '-' && c != '_',
+    }
+}
+
+fn replace_standalone_phrase(s: &str, needle: &str, replacement: &str) -> String {
+    let mut rewritten = String::with_capacity(s.len());
+    let mut search_from = 0;
+
+    while let Some(offset) = s.get(search_from..).and_then(|tail| tail.find(needle)) {
+        let start = search_from + offset;
+        let end = start + needle.len();
+        let prev = s.get(..start).and_then(|prefix| prefix.chars().next_back());
+        let next = s.get(end..).and_then(|suffix| suffix.chars().next());
+
+        if is_rebrand_boundary(prev) && is_rebrand_boundary(next) {
+            rewritten.push_str(s.get(search_from..start).unwrap());
+            rewritten.push_str(replacement);
+            search_from = end;
+        } else {
+            let step = s
+                .get(start..)
+                .and_then(|tail| tail.chars().next())
+                .unwrap()
+                .len_utf8();
+            rewritten.push_str(s.get(search_from..start + step).unwrap());
+            search_from = start + step;
+        }
+    }
+
+    rewritten.push_str(s.get(search_from..).unwrap());
+    rewritten
+}
+
+fn rewrite_cli_invocations(s: &str, b: &Brand) -> String {
+    replace_standalone_phrase(
+        s,
+        &format!("{DEFAULT_BINARY_NAME} term"),
+        &format!("{} term", b.binary_name),
+    )
+}
+
+/// Rewrite the default product noun to the branded equivalents.
+///
+/// Display phrases use `product_name`, while explicit CLI invocations use
+/// `binary_name`.
+fn rebrand_str(s: &str, b: &Brand) -> String {
+    let product_cap = b.product_name_cap();
+    let alias_primary_placeholder = "__BRAND_ALIAS_PRIMARY__";
+    let alias_short_placeholder = "__BRAND_ALIAS_SHORT__";
+    let alias_primary = format!("@{}", b.shell_alias_primary);
+    let alias_short = format!("@{}", b.shell_alias_short);
+
+    let rewritten = rewrite_cli_invocations(
+        &s.replace("@goose", alias_primary_placeholder)
+            .replace("@g", alias_short_placeholder),
+        b,
+    );
+    let rewritten = replace_standalone_phrase(
+        &rewritten,
+        "goose-channel",
+        &format!("{}-channel", b.binary_name),
+    );
+    let rewritten = replace_standalone_phrase(&rewritten, "Goose", &product_cap);
+    let rewritten = replace_standalone_phrase(&rewritten, DEFAULT_PRODUCT_NAME, b.product_name);
+
+    rewritten
+        .replace(alias_primary_placeholder, &alias_primary)
+        .replace(alias_short_placeholder, &alias_short)
+}
+
+/// Walk the clap command tree and rewrite branding-sensitive strings.
+///
+/// On the default build this returns the input unchanged, preserving
+/// byte-identical `--help` output.
+pub fn apply_branding(cmd: clap::Command) -> clap::Command {
+    let b = Brand::get();
+    if b.is_default() {
+        return cmd;
+    }
+    rewrite_command(cmd, b)
+}
+
+fn rewrite_command(mut cmd: clap::Command, b: &Brand) -> clap::Command {
+    if cmd.get_name() == DEFAULT_BINARY_NAME {
+        cmd = cmd.name(b.binary_name).bin_name(b.binary_name);
+    }
+
+    if let Some(about) = cmd.get_about().map(|s| s.to_string()) {
+        cmd = cmd.about(rebrand_str(&about, b));
+    }
+    if let Some(long_about) = cmd.get_long_about().map(|s| s.to_string()) {
+        cmd = cmd.long_about(rebrand_str(&long_about, b));
+    }
+
+    if cmd.get_name() == "completion" {
+        cmd = cmd.mut_arg("bin_name", |a| a.default_value(b.binary_name));
+    }
+
+    // Rewrite branded tokens inside every argument's help / long_help.
+    let arg_ids: Vec<clap::Id> = cmd.get_arguments().map(|a| a.get_id().clone()).collect();
+    for id in arg_ids {
+        cmd = cmd.mut_arg(id, |a| rewrite_arg(a, b));
+    }
+
+    let subcmd_names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    for name in subcmd_names {
+        cmd = cmd.mut_subcommand(name, |sc| rewrite_command(sc, b));
+    }
+
+    cmd
+}
+
+fn rewrite_arg(mut arg: clap::Arg, b: &Brand) -> clap::Arg {
+    if let Some(help) = arg.get_help().map(|s| s.to_string()) {
+        arg = arg.help(rebrand_str(&help, b));
+    }
+    if let Some(long_help) = arg.get_long_help().map(|s| s.to_string()) {
+        arg = arg.long_help(rebrand_str(&long_help, b));
+    }
+    arg
+}
+
+/// Build the branded top-level clap command.
+///
+/// Use this in place of `Cli::command()` at every entry point (the main binary
+/// and the manpage generator) so branding is applied consistently.
+pub fn branded_command() -> clap::Command {
+    use clap::CommandFactory;
+    apply_branding(crate::Cli::command())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn help_brand_matches_defaults(b: &Brand) -> bool {
+        b.product_name == DEFAULT_PRODUCT_NAME && b.binary_name == DEFAULT_BINARY_NAME
+    }
+
+    #[test]
+    fn default_brand_matches_hardcoded_defaults() {
+        let b = Brand::get();
+        if !b.is_default() {
+            return;
+        }
+        assert!(b.is_default(), "default build must have all defaults");
+        assert_eq!(b.product_name, "goose");
+        assert_eq!(b.binary_name, "goose");
+        assert_eq!(b.shell_alias_primary, "goose");
+        assert_eq!(b.shell_alias_short, "g");
+        assert_eq!(b.shell_fn_prefix, "goose");
+        assert_eq!(b.deeplink_scheme, "goose");
+        assert_eq!(b.github_owner, "aaif-goose");
+        assert_eq!(b.github_repo, "goose");
+        assert_eq!(b.agent_identity_sentence, "You are goose, an AI assistant.");
+        assert_eq!(b.interactive_style, "goose");
+    }
+
+    #[test]
+    fn capitalize_ascii() {
+        assert_eq!(capitalize("goose"), "Goose");
+        assert_eq!(capitalize("foobar"), "Foobar");
+        assert_eq!(capitalize(""), "");
+        assert_eq!(capitalize("A"), "A");
+    }
+
+    #[test]
+    fn apply_branding_is_noop_when_help_brand_matches_defaults() {
+        use clap::CommandFactory;
+        let b = Brand::get();
+        if !help_brand_matches_defaults(b) {
+            return;
+        }
+        let before = crate::Cli::command().render_long_help().to_string();
+        let after = branded_command().render_long_help().to_string();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn rebrand_str_rewrites_tokens() {
+        let b = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "chat",
+            shell_alias_short: "c",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "minimal",
+        };
+        assert_eq!(
+            rebrand_str("Configure goose settings", &b),
+            "Configure Foobar settings"
+        );
+        assert_eq!(
+            rebrand_str("Check that your Goose setup is working", &b),
+            "Check that your Foobar setup is working"
+        );
+        assert_eq!(
+            rebrand_str("eval \"$(goose term init zsh)\"", &b),
+            "eval \"$(foobar term init zsh)\""
+        );
+        assert_eq!(
+            rebrand_str("channel_name=goose-channel", &b),
+            "channel_name=foobar-channel"
+        );
+        assert_eq!(
+            rebrand_str("@goose \"create a python script\"", &b),
+            "@chat \"create a python script\""
+        );
+        assert_eq!(
+            rebrand_str("@g \"quick question\"", &b),
+            "@c \"quick question\""
+        );
+    }
+
+    #[test]
+    fn synthetic_non_default_brand_rewrites_alias_examples() {
+        use clap::CommandFactory;
+        let b = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "chat",
+            shell_alias_short: "c",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "minimal",
+        };
+        let mut cmd = rewrite_command(crate::Cli::command(), &b);
+        let term_help = cmd
+            .find_subcommand_mut("term")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(
+            term_help.contains("@chat \"create a python script\""),
+            "{term_help}"
+        );
+        assert!(term_help.contains("@c \"quick question\""), "{term_help}");
+        assert!(
+            !term_help.contains("@foobar \"create a python script\""),
+            "{term_help}"
+        );
+
+        let run_help = cmd
+            .find_subcommand_mut("term")
+            .unwrap()
+            .find_subcommand_mut("run")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(run_help.contains("@chat list files"), "{run_help}");
+        assert!(run_help.contains("@c why did that fail"), "{run_help}");
+        assert!(!run_help.contains("@foobar list files"), "{run_help}");
+    }
+
+    #[test]
+    fn synthetic_non_default_brand_rewrites_help() {
+        // Simulate a non-default build by walking a fresh command tree with
+        // an explicit non-default brand.
+        use clap::CommandFactory;
+        let b = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "foobar",
+            shell_alias_short: "fb",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "minimal",
+        };
+        let mut cmd = rewrite_command(crate::Cli::command(), &b);
+        assert_eq!(cmd.get_name(), "foobar");
+        let rendered = cmd.render_long_help().to_string();
+        assert!(!rendered.contains("goose"), "{rendered}");
+        assert!(!rendered.contains("Goose"), "{rendered}");
+    }
+
+    #[test]
+    fn mismatched_product_and_binary_names_keep_help_semantics_distinct() {
+        use clap::CommandFactory;
+        let b = Brand {
+            product_name: "Foobar Assistant",
+            binary_name: "fb",
+            shell_alias_primary: "chat",
+            shell_alias_short: "c",
+            shell_fn_prefix: "fb",
+            deeplink_scheme: "foob",
+            github_owner: "acme",
+            github_repo: "fb",
+            agent_identity_sentence: "You are Foobar Assistant, an AI assistant.",
+            interactive_style: "minimal",
+        };
+
+        let mut cmd = rewrite_command(crate::Cli::command(), &b);
+        let mcp_help = cmd
+            .find_subcommand_mut("mcp")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(
+            mcp_help.contains("bundled with Foobar Assistant"),
+            "{mcp_help}"
+        );
+        assert!(!mcp_help.contains("bundled with fb"), "{mcp_help}");
+
+        let term_help = cmd
+            .find_subcommand_mut("term")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(
+            term_help.contains("Runs a Foobar Assistant session tied to your terminal window."),
+            "{term_help}"
+        );
+        assert!(
+            term_help.contains("eval \"$(fb term init zsh)\""),
+            "{term_help}"
+        );
+        assert!(
+            term_help.contains("fb term run \"list files in this directory\""),
+            "{term_help}"
+        );
+    }
+
+    /// Regression guard: under a synthetic non-default brand, no subcommand's
+    /// rendered help (including every argument's help / long_help) may leak
+    /// the default product noun.
+    ///
+    /// This walks the entire command tree recursively, so when a contributor
+    /// adds a new subcommand or argument that accidentally hardcodes `goose`
+    /// / `Goose` in a clap derive attribute, this test fails with the name
+    /// of the offending command and the full rendered help text — pointing
+    /// them at [`apply_branding`] / [`rewrite_command`] so they can either
+    /// route the string through the rewriter or move it out of the derive
+    /// and into a runtime [`Brand::get()`] lookup.
+    ///
+    /// It does NOT catch hardcoded runtime strings (e.g. a new
+    /// `println!("goose ...")` call) — PR review remains the safety net for
+    /// those. But the clap-derive surface is where the bulk of regressions
+    /// would land.
+    #[test]
+    fn no_goose_leaks_in_any_branded_subcommand_help() {
+        use clap::CommandFactory;
+        let b = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "foobar",
+            shell_alias_short: "fb",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "minimal",
+        };
+        let cmd = rewrite_command(crate::Cli::command(), &b);
+        assert_no_leaks_recursive(&cmd, "");
+    }
+
+    #[test]
+    fn interactive_style_controls_prompt_and_banner() {
+        let goose = Brand {
+            product_name: "goose",
+            binary_name: "goose",
+            shell_alias_primary: "goose",
+            shell_alias_short: "g",
+            shell_fn_prefix: "goose",
+            deeplink_scheme: "goose",
+            github_owner: "aaif-goose",
+            github_repo: "goose",
+            agent_identity_sentence: "You are goose, an AI assistant.",
+            interactive_style: "goose",
+        };
+        assert_eq!(goose.interactive_prefix(), "🪿 ");
+        assert_eq!(goose.terminal_title_prefix(), "🪿");
+        assert_eq!(
+            goose.session_banner_lines(),
+            ["  __( O)>", r" \____)", "   L L"]
+        );
+
+        let minimal = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "foobar",
+            shell_alias_short: "fb",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "minimal",
+        };
+        assert_eq!(minimal.interactive_prefix(), "> ");
+        assert_eq!(minimal.terminal_title_prefix(), "Foobar");
+        assert_eq!(minimal.session_banner_lines(), [">", "", ""]);
+    }
+
+    #[test]
+    fn unknown_interactive_style_falls_back_to_goose() {
+        let b = Brand {
+            product_name: "Foobar",
+            binary_name: "foobar",
+            shell_alias_primary: "foobar",
+            shell_alias_short: "fb",
+            shell_fn_prefix: "foobar",
+            deeplink_scheme: "foobar",
+            github_owner: "acme",
+            github_repo: "foobar",
+            agent_identity_sentence: "You are foobar, an AI assistant.",
+            interactive_style: "mystery",
+        };
+        assert_eq!(b.interactive_prefix(), "🪿 ");
+        assert_eq!(b.terminal_title_prefix(), "🪿");
+        assert_eq!(
+            b.session_banner_lines(),
+            ["  __( O)>", r" \____)", "   L L"]
+        );
+    }
+
+    fn assert_no_leaks_recursive(cmd: &clap::Command, path: &str) {
+        let current_path = if path.is_empty() {
+            cmd.get_name().to_string()
+        } else {
+            format!("{path} {}", cmd.get_name())
+        };
+
+        // clap rendering needs &mut self; clone is cheap for a test.
+        let mut long_clone = cmd.clone();
+        let long_help = long_clone.render_long_help().to_string();
+        let mut short_clone = cmd.clone();
+        let short_help = short_clone.render_help().to_string();
+
+        assert!(
+            !long_help.contains("goose"),
+            "branding leak: `{current_path}` long help contains lowercase `goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nFull help:\n{long_help}"
+        );
+        assert!(
+            !long_help.contains("Goose"),
+            "branding leak: `{current_path}` long help contains capitalized `Goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nFull help:\n{long_help}"
+        );
+        assert!(
+            !short_help.contains("goose"),
+            "branding leak: `{current_path}` short help contains lowercase `goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nShort help:\n{short_help}"
+        );
+        assert!(
+            !short_help.contains("Goose"),
+            "branding leak: `{current_path}` short help contains capitalized `Goose`. \
+             Either route the offending string through `apply_branding` / `Brand::get()` \
+             or remove it from the clap derive attribute.\n\nShort help:\n{short_help}"
+        );
+
+        for sub in cmd.get_subcommands() {
+            if sub.get_name() == "help" {
+                continue;
+            }
+            assert_no_leaks_recursive(sub, &current_path);
+        }
+    }
+}
